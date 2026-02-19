@@ -36,50 +36,181 @@ function StepBadge({ n, done, active }) {
   )
 }
 
+// ─── Popup "aucun contenant" avec compte à rebours ────────────────────────────
+function NoContainerPopup({ clientName, onClose }) {
+  const [countdown, setCountdown] = useState(5)
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setCountdown(prev => {
+        if (prev <= 1) { clearInterval(interval); onClose(); return 0 }
+        return prev - 1
+      })
+    }, 1000)
+    return () => clearInterval(interval)
+  }, [onClose])
+
+  return (
+    <div style={{
+      position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)',
+      display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: 20
+    }}>
+      <div style={{ background: C.card, borderRadius: 20, padding: 32, maxWidth: 340, width: '100%', textAlign: 'center', boxShadow: '0 8px 32px rgba(0,0,0,0.2)' }}>
+        <div style={{ fontSize: 48, marginBottom: 12 }}>📭</div>
+        <h3 style={{ margin: '0 0 8px', color: C.primary }}>Aucun contenant</h3>
+        <p style={{ color: C.muted, fontSize: 14, margin: '0 0 20px' }}>
+          <strong>{clientName}</strong> n'a aucun contenant en cours auprès de cette entreprise.
+        </p>
+        <div style={{ background: C.bg, borderRadius: 10, padding: '10px 16px', fontSize: 13, color: C.muted }}>
+          Retour automatique dans <strong style={{ color: C.primary }}>{countdown}s</strong>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export default function ScanPage({ company, onBack, onDone }) {
-  const [action, setAction] = useState('consigne')
+  const [action, setAction] = useState('deconsigne')
+
+  // ── États communs ──────────────────────────────────────────────────────────
   const [step, setStep] = useState(1)
-  const [scannedCont, setScannedCont] = useState(null)
   const [scannedClient, setScannedClient] = useState(null)
   const [status, setStatus] = useState(null)
   const [loading, setLoading] = useState(false)
   const [scannerReady, setScannerReady] = useState(false)
 
-  // ===== FIX 1 : Refs pour le scanner et le step =====
-  // On utilise des refs pour que le callback du scanner ait toujours
-  // accès aux valeurs ACTUELLES (pas celles capturées au montage)
+  // ── États déconsigne ───────────────────────────────────────────────────────
+  const [clientContainers, setClientContainers] = useState([])
+  const [selectedIds, setSelectedIds] = useState([])
+  const [showNoContainer, setShowNoContainer] = useState(false)
+
+  // ── États consigne multiple ────────────────────────────────────────────────
+  const [scannedConts, setScannedConts] = useState([])
+
+  // ── Refs scanner ──────────────────────────────────────────────────────────
   const scannerRef = useRef(null)
   const stepRef = useRef(1)
-  const processingRef = useRef(false) // Anti-double-scan
+  const actionRef = useRef('deconsigne')
+  const processingRef = useRef(false)
+  const scannedContsRef = useRef([])
 
-  // Garder stepRef synchronisé avec step
-  useEffect(() => {
-    stepRef.current = step
-  }, [step])
+  useEffect(() => { stepRef.current = step }, [step])
+  useEffect(() => { actionRef.current = action }, [action])
+  useEffect(() => { scannedContsRef.current = scannedConts }, [scannedConts])
 
+  // ─────────────────────────────────────────────────────────────────────────
+  // Résolution QR
+  // ─────────────────────────────────────────────────────────────────────────
   const resolveQR = (raw, expected) => {
     const direct = parseQR(raw.trim())
     if (!direct.error) return direct
     return parseQR(expected === 'container' ? `NUT:CONT:${raw.trim()}` : `NUT:CLIENT:${raw.trim()}`)
   }
 
-  // ===== FIX 2 : handleScan lit stepRef.current =====
+  // ─────────────────────────────────────────────────────────────────────────
+  // Gestion scanner
+  // ─────────────────────────────────────────────────────────────────────────
+  const stopScanner = useCallback(async () => {
+    if (scannerRef.current) {
+      try {
+        const state = scannerRef.current.getState()
+        if (state === 2 || state === 3) await scannerRef.current.stop()
+        scannerRef.current.clear()
+      } catch (err) {
+        console.warn('Scanner stop/clear:', err)
+      }
+      scannerRef.current = null
+      setScannerReady(false)
+    }
+  }, [])
+
   const handleScan = useCallback(async (decodedText) => {
-    // Empêcher les scans multiples simultanés
     if (processingRef.current) return
     processingRef.current = true
 
     const currentStep = stepRef.current
+    const currentAction = actionRef.current
 
     try {
-      if (currentStep === 1) {
-        const r = resolveQR(decodedText, 'container')
-        if (r.error) {
-          setStatus({ type: 'error', msg: r.error })
+
+      // ════════════════════════════════════════════════════════════════════
+      // DÉCONSIGNE — étape 1 : scan client
+      // ════════════════════════════════════════════════════════════════════
+      if (currentAction === 'deconsigne' && currentStep === 1) {
+        const r = resolveQR(decodedText, 'client')
+        if (r.error || r.type !== 'client') {
+          setStatus({ type: 'error', msg: 'Scannez un QR code client' })
           return
         }
-        if (r.type !== 'container') {
-          setStatus({ type: 'error', msg: 'Scannez un contenant, pas un client' })
+
+        const { data, error } = await supabase
+          .from('profiles')
+          .select('id, name, role, nut_coins')
+          .eq('id', r.id)
+          .single()
+
+        if (error || !data || data.role !== 'client') {
+          setStatus({ type: 'error', msg: 'Client introuvable ou invalide' })
+          return
+        }
+
+        const allContainers = await containerRepo.getByClient(data.id)
+        const companyContainers = allContainers.filter(
+          c => c.current_owner_company_id === company.id && c.status === 'in_use'
+        )
+
+        setScannedClient(data)
+        stopScanner()
+
+        if (companyContainers.length === 0) {
+          setShowNoContainer(true)
+          return
+        }
+
+        setClientContainers(companyContainers)
+        setSelectedIds(companyContainers.map(c => c.id))
+        setStep(2)
+        setStatus(null)
+      }
+
+      // ════════════════════════════════════════════════════════════════════
+      // CONSIGNE — étape 1 : scan client
+      // ════════════════════════════════════════════════════════════════════
+      if (currentAction === 'consigne' && currentStep === 1) {
+        const r = resolveQR(decodedText, 'client')
+        if (r.error || r.type !== 'client') {
+          setStatus({ type: 'error', msg: 'Scannez un QR code client' })
+          return
+        }
+
+        const { data, error } = await supabase
+          .from('profiles')
+          .select('id, name, role, nut_coins')
+          .eq('id', r.id)
+          .single()
+
+        if (error || !data || data.role !== 'client') {
+          setStatus({ type: 'error', msg: 'Client introuvable ou invalide' })
+          return
+        }
+
+        setScannedClient(data)
+        setStatus({ type: 'success', msg: `✅ ${data.name} identifié — scannez les contenants` })
+        setStep(2)
+      }
+
+      // ════════════════════════════════════════════════════════════════════
+      // CONSIGNE — étape 2 : scan contenants un par un
+      // ════════════════════════════════════════════════════════════════════
+      if (currentAction === 'consigne' && currentStep === 2) {
+        const r = resolveQR(decodedText, 'container')
+        if (r.error || r.type !== 'container') {
+          setStatus({ type: 'error', msg: 'Scannez un contenant (pas un QR client)' })
+          return
+        }
+
+        if (scannedContsRef.current.some(c => c.id === r.id)) {
+          setStatus({ type: 'error', msg: '⚠️ Ce contenant est déjà dans la liste' })
           return
         }
 
@@ -90,90 +221,36 @@ export default function ScanPage({ company, onBack, onDone }) {
           return
         }
 
-        setScannedCont(cont)
-        setStatus({ type: 'success', msg: `✅ ${cont.container_type} détecté` })
-        setStep(2)
-
-      } else if (currentStep === 2) {
-        const r = resolveQR(decodedText, 'client')
-        if (r.error) {
-          setStatus({ type: 'error', msg: r.error })
-          return
-        }
-        if (r.type !== 'client') {
-          setStatus({ type: 'error', msg: 'Scannez un QR client' })
+        if (cont.status === 'in_use') {
+          setStatus({ type: 'error', msg: '⚠️ Ce contenant est déjà en cours d\'utilisation' })
           return
         }
 
-        const { data, error } = await supabase
-          .from('profiles')
-          .select('id, name, role, nut_coins')
-          .eq('id', r.id)
-          .single()
-
-        if (error || !data) {
-          setStatus({ type: 'error', msg: 'Client introuvable' })
-          return
-        }
-        if (data.role !== 'client') {
-          setStatus({ type: 'error', msg: 'Utilisateur invalide' })
-          return
-        }
-
-        setScannedClient(data)
-        setStatus({ type: 'success', msg: `✅ ${data.name} détecté` })
-        setStep(3)
-
-        // Stopper le scanner à l'étape 3 (plus besoin de la caméra)
-        stopScanner()
+        setScannedConts(prev => [...prev, cont])
+        setStatus({ type: 'success', msg: `✅ ${cont.container_type} ajouté — scannez le suivant ou validez` })
       }
+
     } catch (e) {
-      setStatus({ type: 'error', msg: currentStep === 1 ? 'Contenant introuvable' : 'Erreur lors du scan client' })
+      setStatus({ type: 'error', msg: 'Erreur lors du scan' })
     } finally {
-      // Petit délai avant de ré-autoriser un scan (évite les doublons)
       setTimeout(() => { processingRef.current = false }, 1500)
     }
-  }, [company])
-
-  // ===== FIX 3 : Fonctions scanner avec ref =====
-  const stopScanner = useCallback(async () => {
-    if (scannerRef.current) {
-      try {
-        const state = scannerRef.current.getState()
-        // State 2 = SCANNING, State 3 = PAUSED
-        if (state === 2 || state === 3) {
-          await scannerRef.current.stop()
-        }
-        scannerRef.current.clear()
-      } catch (err) {
-        console.warn('Scanner stop/clear:', err)
-      }
-      scannerRef.current = null
-      setScannerReady(false)
-    }
-  }, [])
+  }, [company, stopScanner])
 
   const startScanner = useCallback(async () => {
-    // S'assurer qu'il n'y a pas déjà un scanner actif
     await stopScanner()
-
-    // Attendre que le DOM soit prêt
     await new Promise(resolve => setTimeout(resolve, 400))
-
     const el = document.getElementById('qr-scanner')
     if (!el) return
-
     try {
       const html5QrCode = new Html5Qrcode('qr-scanner')
       scannerRef.current = html5QrCode
-
       await html5QrCode.start(
         { facingMode: 'environment' },
         { fps: 10, qrbox: { width: 250, height: 250 } },
         (decodedText) => handleScan(decodedText),
-        () => {} // Ignorer les erreurs de frames sans QR
+        () => {}
       )
-
       setScannerReady(true)
     } catch (err) {
       console.error('Erreur scanner:', err)
@@ -181,39 +258,52 @@ export default function ScanPage({ company, onBack, onDone }) {
     }
   }, [handleScan, stopScanner])
 
-  // ===== FIX 4 : useEffect avec cleanup propre =====
   useEffect(() => {
     let cancelled = false
-
     const init = async () => {
-      // Petit délai pour laisser le DOM se stabiliser (StrictMode-safe)
       await new Promise(r => setTimeout(r, 100))
-      if (!cancelled) {
-        startScanner()
-      }
+      if (!cancelled) startScanner()
     }
-
     init()
-
-    return () => {
-      cancelled = true
-      stopScanner()
-    }
+    return () => { cancelled = true; stopScanner() }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
+  // ─────────────────────────────────────────────────────────────────────────
+  // Validation
+  // ─────────────────────────────────────────────────────────────────────────
   const handleValidate = async () => {
     setLoading(true)
     setStatus(null)
     try {
-      if (action === 'consigne') {
-        await execConsigne({ companyId: company.id, clientId: scannedClient.id, containerId: scannedCont.id })
-        setStatus({ type: 'success', msg: `✅ Consigne enregistrée !` })
+      if (action === 'deconsigne') {
+        let totalCoins = 0
+        for (const containerId of selectedIds) {
+          const result = await execDeconsigne({
+            companyId: company.id,
+            clientId: scannedClient.id,
+            containerId,
+          })
+          totalCoins += result.nutCoinsEarned || 0
+        }
+        setStatus({
+          type: 'success',
+          msg: `✅ ${selectedIds.length} déconsigne${selectedIds.length > 1 ? 's' : ''} réussie${selectedIds.length > 1 ? 's' : ''} ! +${totalCoins} 🌰`
+        })
       } else {
-        const result = await execDeconsigne({ companyId: company.id, clientId: scannedClient.id, containerId: scannedCont.id })
-        setStatus({ type: 'success', msg: `✅ Déconsigne réussie ! +${result.nutCoinsEarned} 🌰` })
+        for (const cont of scannedConts) {
+          await execConsigne({
+            companyId: company.id,
+            clientId: scannedClient.id,
+            containerId: cont.id,
+          })
+        }
+        setStatus({
+          type: 'success',
+          msg: `✅ ${scannedConts.length} consigne${scannedConts.length > 1 ? 's' : ''} enregistrée${scannedConts.length > 1 ? 's' : ''} !`
+        })
       }
       onDone()
-      setTimeout(handleReset, 2000)
+      setTimeout(handleReset, 2500)
     } catch (e) {
       setStatus({ type: 'error', msg: e.message })
     } finally {
@@ -222,19 +312,42 @@ export default function ScanPage({ company, onBack, onDone }) {
   }
 
   const handleReset = async () => {
-    setScannedCont(null)
     setScannedClient(null)
+    setScannedConts([])
+    setClientContainers([])
+    setSelectedIds([])
     setStatus(null)
     setStep(1)
+    setShowNoContainer(false)
     processingRef.current = false
-    // Redémarrer le scanner si on revient aux étapes de scan
     await startScanner()
   }
 
+  const removeContenant = (id) => setScannedConts(prev => prev.filter(c => c.id !== id))
+
+  const toggleContainer = (id) => {
+    setSelectedIds(prev =>
+      prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]
+    )
+  }
+
+  const needsScanner = step === 1 || (action === 'consigne' && step === 2)
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Render
+  // ─────────────────────────────────────────────────────────────────────────
   return (
     <div style={{ minHeight: '100vh', background: C.bg }}>
+
+      {showNoContainer && (
+        <NoContainerPopup clientName={scannedClient?.name} onClose={handleReset} />
+      )}
+
       <header style={{ background: C.primary, padding: '16px 20px', display: 'flex', alignItems: 'center', gap: 12 }}>
-        <button style={{ ...s.btn('ghost', true), background: 'rgba(255,255,255,0.15)', color: '#fff', border: 'none' }} onClick={() => { stopScanner(); onBack() }}>
+        <button
+          style={{ ...s.btn('ghost', true), background: 'rgba(255,255,255,0.15)', color: '#fff', border: 'none' }}
+          onClick={() => { stopScanner(); onBack() }}
+        >
           ← Retour
         </button>
         <div style={{ color: '#fff', fontWeight: 800, fontSize: 18 }}>📷 Scanner</div>
@@ -242,27 +355,35 @@ export default function ScanPage({ company, onBack, onDone }) {
       </header>
 
       <div style={{ maxWidth: 500, margin: '0 auto', padding: 20 }}>
+
+        {/* Sélecteur d'action */}
         <div style={s.card}>
-          <label style={{ fontSize: 13, fontWeight: 600, color: C.muted, display: 'block', marginBottom: 10 }}>Type d'opération</label>
+          <label style={{ fontSize: 13, fontWeight: 600, color: C.muted, display: 'block', marginBottom: 10 }}>
+            Type d'opération
+          </label>
           <div style={{ display: 'flex', gap: 8 }}>
             {['consigne', 'deconsigne'].map(a => (
-              <button key={a} style={{ ...s.btn(action === a ? 'primary' : 'ghost'), flex: 1 }}
-                onClick={() => { setAction(a); handleReset() }}>
+              <button key={a}
+                style={{ ...s.btn(action === a ? 'primary' : 'ghost'), flex: 1 }}
+                onClick={() => { setAction(a); handleReset() }}
+              >
                 {a === 'consigne' ? '📦 Consigne' : '♻️ Déconsigne'}
               </button>
             ))}
           </div>
         </div>
 
-        {/* Zone de scan unique */}
-        {step < 3 && (
+        {/* Zone de scan caméra */}
+        {needsScanner && (
           <div style={s.card}>
             <div style={{ marginBottom: 12, textAlign: 'center' }}>
               <div style={{ fontSize: 16, fontWeight: 700, color: C.primary, marginBottom: 4 }}>
-                {step === 1 ? '📦 Scannez le contenant' : '👤 Scannez le QR client'}
+                {step === 1 ? '👤 Scannez le QR code du client' : '📦 Scannez un contenant'}
               </div>
               <div style={{ fontSize: 13, color: C.muted }}>
-                {step === 1 ? 'Présentez le QR du contenant devant la caméra' : 'Présentez le QR client devant la caméra'}
+                {step === 1
+                  ? 'Présentez le QR code client devant la caméra'
+                  : 'Scannez autant de contenants que nécessaire, puis validez'}
               </div>
             </div>
             <div id="qr-scanner" style={{ width: '100%', minHeight: 300 }}></div>
@@ -274,67 +395,154 @@ export default function ScanPage({ company, onBack, onDone }) {
           </div>
         )}
 
-        {/* Infos scannées */}
-        <div style={s.card}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
-            <StepBadge n={1} done={step > 1} active={step === 1} />
-            <span style={{ fontWeight: 700 }}>Contenant</span>
-          </div>
-          {scannedCont ? (
-            <div style={{ background: '#f0fdf4', borderRadius: 8, padding: '8px 12px', fontSize: 14 }}>
-              📦 <strong>{scannedCont.container_type}</strong> · <span style={{ color: C.muted }}>{scannedCont.id}</span>
+        {/* ══ CONSIGNE étape 2 : liste des contenants scannés ══ */}
+        {action === 'consigne' && step === 2 && (
+          <>
+            <div style={{ ...s.card, background: '#f0fdf4', border: `1px solid #bbf7d0` }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <StepBadge n={1} done active={false} />
+                <div>
+                  <div style={{ fontWeight: 700, fontSize: 16 }}>{scannedClient?.name}</div>
+                  <div style={{ fontSize: 13, color: C.muted }}>🌰 {scannedClient?.nut_coins} NutCoins actuels</div>
+                </div>
+              </div>
             </div>
-          ) : (
-            <div style={{ color: C.muted, fontSize: 14 }}>En attente de scan...</div>
-          )}
-        </div>
 
-        <div style={s.card}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
-            <StepBadge n={2} done={step > 2} active={step === 2} />
-            <span style={{ fontWeight: 700 }}>Client</span>
-          </div>
-          {scannedClient ? (
-            <div style={{ background: '#f0fdf4', borderRadius: 8, padding: '8px 12px', fontSize: 14 }}>
-              👤 <strong>{scannedClient.name}</strong> · 🌰 {scannedClient.nut_coins} coins
-            </div>
-          ) : (
-            <div style={{ color: C.muted, fontSize: 14 }}>En attente de scan...</div>
-          )}
-        </div>
+            {scannedConts.length > 0 && (
+              <div style={s.card}>
+                <h3 style={{ margin: '0 0 14px', fontSize: 15 }}>
+                  Contenants à consigner ({scannedConts.length})
+                </h3>
+                {scannedConts.map(c => (
+                  <div key={c.id} style={{
+                    display: 'flex', alignItems: 'center', gap: 12,
+                    padding: '12px 14px', borderRadius: 10, marginBottom: 8,
+                    border: `1.5px solid ${C.primary}`, background: '#f0fdf4',
+                  }}>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontWeight: 600, fontSize: 14 }}>📦 {c.container_type}</div>
+                      <div style={{ fontSize: 11, color: C.muted, marginTop: 2 }}>{c.id}</div>
+                    </div>
+                    <button
+                      style={{ ...s.btn('ghost', true), fontSize: 12, padding: '4px 10px', color: '#991b1b', border: 'none', background: '#fee2e2' }}
+                      onClick={() => removeContenant(c.id)}
+                    >
+                      ✕
+                    </button>
+                  </div>
+                ))}
 
-        {/* Validation */}
-        {step === 3 && (
-          <div style={s.card}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16 }}>
-              <StepBadge n={3} done={false} active={true} />
-              <span style={{ fontWeight: 700 }}>Confirmer l'opération</span>
+                <button
+                  style={{ ...s.btn('accent'), width: '100%', fontSize: 16, padding: '14px 20px', marginTop: 8 }}
+                  onClick={handleValidate}
+                  disabled={loading}
+                >
+                  {loading
+                    ? '⏳ Validation...'
+                    : `✅ Valider ${scannedConts.length > 1 ? `les ${scannedConts.length} consignes` : 'la consigne'}`}
+                </button>
+              </div>
+            )}
+          </>
+        )}
+
+        {/* ══ DÉCONSIGNE étape 2 : liste avec cases à cocher ══ */}
+        {action === 'deconsigne' && step === 2 && (
+          <>
+            <div style={{ ...s.card, background: '#f0fdf4', border: `1px solid #bbf7d0` }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <span style={{ fontSize: 24 }}>👤</span>
+                <div>
+                  <div style={{ fontWeight: 700, fontSize: 16 }}>{scannedClient?.name}</div>
+                  <div style={{ fontSize: 13, color: C.muted }}>🌰 {scannedClient?.nut_coins} NutCoins actuels</div>
+                </div>
+              </div>
             </div>
-            <div style={{ background: '#f8faff', borderRadius: 10, padding: 14, marginBottom: 16, fontSize: 14, lineHeight: 1.8 }}>
-              <div>🔄 <strong>{action === 'consigne' ? 'Consigne' : 'Déconsigne'}</strong></div>
-              <div>📦 {scannedCont?.container_type} ({scannedCont?.id})</div>
-              <div>👤 {scannedClient?.name}</div>
-              <div>🏢 {company.name}</div>
-              {action === 'deconsigne' && (
-                <div style={{ color: C.primary, fontWeight: 700, marginTop: 4 }}>
-                  +{company.points_per_deconsigne} 🌰 NutCoins
+
+            <div style={s.card}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
+                <h3 style={{ margin: 0, fontSize: 15 }}>
+                  Contenants à rendre ({clientContainers.length})
+                </h3>
+                <button
+                  style={{ ...s.btn('ghost', true), fontSize: 12, padding: '4px 10px' }}
+                  onClick={() =>
+                    selectedIds.length === clientContainers.length
+                      ? setSelectedIds([])
+                      : setSelectedIds(clientContainers.map(c => c.id))
+                  }
+                >
+                  {selectedIds.length === clientContainers.length ? 'Tout décocher' : 'Tout cocher'}
+                </button>
+              </div>
+
+              {clientContainers.map(c => (
+                <label key={c.id} style={{
+                  display: 'flex', alignItems: 'center', gap: 12,
+                  padding: '12px 14px', borderRadius: 10, marginBottom: 8,
+                  border: `1.5px solid ${selectedIds.includes(c.id) ? C.primary : C.border}`,
+                  background: selectedIds.includes(c.id) ? '#f0fdf4' : C.bg,
+                  cursor: 'pointer', transition: 'all 0.15s ease'
+                }}>
+                  <input
+                    type="checkbox"
+                    checked={selectedIds.includes(c.id)}
+                    onChange={() => toggleContainer(c.id)}
+                    style={{ width: 18, height: 18, accentColor: C.primary, cursor: 'pointer' }}
+                  />
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontWeight: 600, fontSize: 14 }}>📦 {c.container_type}</div>
+                    <div style={{ fontSize: 11, color: C.muted, marginTop: 2 }}>
+                      Depuis le {new Date(c.updated_at).toLocaleDateString('fr-FR')}
+                    </div>
+                  </div>
+                  {selectedIds.includes(c.id) && (
+                    <span style={{ color: C.primary, fontWeight: 700, fontSize: 13 }}>
+                      +{company.points_per_deconsigne} 🌰
+                    </span>
+                  )}
+                </label>
+              ))}
+
+              {selectedIds.length > 0 && (
+                <div style={{ background: '#f0fdf4', borderRadius: 10, padding: '10px 14px', marginTop: 8, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span style={{ fontSize: 14, color: C.muted }}>
+                    {selectedIds.length} contenant{selectedIds.length > 1 ? 's' : ''} sélectionné{selectedIds.length > 1 ? 's' : ''}
+                  </span>
+                  <span style={{ fontWeight: 700, color: C.primary, fontSize: 15 }}>
+                    +{selectedIds.length * company.points_per_deconsigne} 🌰
+                  </span>
                 </div>
               )}
             </div>
-            <button style={{ ...s.btn('accent'), width: '100%', marginBottom: 8 }} onClick={handleValidate} disabled={loading}>
-              {loading ? '⏳ Validation...' : '✅ Valider'}
+
+            <button
+              style={{ ...s.btn('accent'), width: '100%', fontSize: 16, padding: '14px 20px', marginBottom: 12, opacity: selectedIds.length === 0 ? 0.5 : 1 }}
+              onClick={handleValidate}
+              disabled={loading || selectedIds.length === 0}
+            >
+              {loading
+                ? '⏳ Validation...'
+                : `✅ Valider ${selectedIds.length > 1 ? `les ${selectedIds.length} déconsignes` : 'la déconsigne'}`}
             </button>
-          </div>
+          </>
         )}
 
-        {/* Messages */}
+        {/* Messages status */}
         {status && (
-          <div style={{ background: status.type === 'success' ? C.success : C.error, color: status.type === 'success' ? C.successText : C.errorText, borderRadius: 10, padding: '12px 16px', fontSize: 14, marginBottom: 12 }}>
+          <div style={{
+            background: status.type === 'success' ? C.success : C.error,
+            color: status.type === 'success' ? C.successText : C.errorText,
+            borderRadius: 10, padding: '12px 16px', fontSize: 14, marginBottom: 12
+          }}>
             {status.msg}
           </div>
         )}
 
-        <button style={{ ...s.btn('ghost'), border: `1px solid ${C.border}` }} onClick={handleReset}>
+        <button
+          style={{ ...s.btn('ghost'), border: `1px solid ${C.border}`, width: '100%' }}
+          onClick={handleReset}
+        >
           🔄 Recommencer
         </button>
       </div>
