@@ -98,7 +98,7 @@ export default function ClientDashboard() {
       {/* Header */}
       <header style={{ background: C.primary, padding: '16px 20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <span style={{ fontSize: 28 }}>🌰</span>
+          <img src="/logo-header.png" alt="NUT" style={{ height: 36, objectFit: 'contain' }} />
           <div>
             <div style={{ color: '#fff', fontWeight: 800, fontSize: 18 }}>NUT</div>
             <div style={{ color: '#a7f3d0', fontSize: 12 }}>Espace client</div>
@@ -189,21 +189,16 @@ export default function ClientDashboard() {
                   Présentez ce code à l'entreprise lors d'une consigne ou déconsigne.
                 </p>
                 <div style={{ background: '#fff', border: `2px solid ${C.border}`, borderRadius: 16, padding: 24, maxWidth: 280, margin: '0 auto', display: 'flex', justifyContent: 'center' }}>
-                    <QRCodeSVG 
-                      value={qrCode} 
-                      size={200}
-                      level="M"
-                      includeMargin={true}
-                    />
-                  </div>
-                  <div style={{ marginTop: 12, textAlign: 'center', fontFamily: 'monospace', fontSize: 11, color: C.muted, wordBreak: 'break-all' }}>
-                    {qrCode}
-                  </div>
-                <p style={{ color: C.muted, fontSize: 12, marginTop: 16 }}>
-                  Ce code peut être scanné ou saisi manuellement.
-                </p>
+                  <QRCodeSVG 
+                    value={qrCode} 
+                    size={200}
+                    level="M"
+                    includeMargin={true}
+                  />
+                </div>
               </div>
             )}
+            
           </>
         )}
       </div>
