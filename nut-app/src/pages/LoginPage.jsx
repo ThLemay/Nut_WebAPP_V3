@@ -49,6 +49,9 @@ export default function LoginPage() {
     { label: '🥣 BioBowl (Entreprise)', email: 'bio@demo.com' },
     { label: '👤 Alice (Client)', email: 'alice@demo.com' },
     { label: '👤 Bob (Client)', email: 'bob@demo.com' },
+    { label: '🐟 Marée Fraîche (Mareyeur)', email: 'maree@demo.com' },
+    { label: '🎣 Jean Le Marin (Pêcheur)', email: 'peche@demo.com' },
+    { label: '🏪 SuperFrais (GMS)', email: 'gms@demo.com' },
   ]
 
   return (
