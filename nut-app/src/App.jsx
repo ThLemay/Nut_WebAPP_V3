@@ -2,11 +2,10 @@ import { AuthProvider, useAuth } from './auth/AuthContext'
 import LoginPage from './pages/LoginPage'
 import ClientDashboard from './pages/ClientDashboard'
 import EntrepriseDashboard from './pages/EntrepriseDashboard'
+import CrateDashboard from './pages/CrateDashboard'
 
 function AppInner() {
   const { profile, loading } = useAuth()
-  
-  console.log('AppInner render:', { profile, loading })  // ← ajoutez cette ligne
 
   if (loading) {
     return (
@@ -17,8 +16,16 @@ function AppInner() {
   }
 
   if (!profile) return <LoginPage />
-  if (profile.role === 'entreprise') return <EntrepriseDashboard />
-  return <ClientDashboard />
+
+  switch (profile.role) {
+    case 'entreprise': return <EntrepriseDashboard />
+    case 'mareyeur':
+    case 'pecheur':
+    case 'gms':
+      return <CrateDashboard />
+    default:
+      return <ClientDashboard />
+  }
 }
 
 export default function App() {

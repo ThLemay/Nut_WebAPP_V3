@@ -132,37 +132,59 @@ export default function EntrepriseDashboard() {
   return (
     <div style={{ minHeight: '100vh', background: C.bg }}>
       {/* Header */}
-      <header style={{ background: C.primary, padding: '16px 20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <header style={{ background: C.primary, padding: '16px 20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <span style={{ fontSize: 28 }}>🌰</span>
+          <img src="/logo-header.png" alt="NUT" style={{ height: 36, objectFit: 'contain' }} />
           <div>
             <div style={{ color: '#fff', fontWeight: 800, fontSize: 18 }}>NUT</div>
             <div style={{ color: '#a7f3d0', fontSize: 12 }}>{company.name}</div>
           </div>
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <button style={s.btn('accent')} onClick={() => setShowScan(true)}>📷 Scanner</button>
-          <button style={{ ...s.btn('ghost', true), background: 'rgba(255,255,255,0.15)', color: '#fff', border: 'none' }} onClick={logout}>
-            Déco
-          </button>
-        </div>
+        <button 
+          style={{ ...s.btn('ghost', true), background: 'rgba(255,255,255,0.15)', color: '#fff', border: 'none' }} 
+          onClick={logout}
+        >
+          Déconnexion
+        </button>
       </header>
 
       <div style={{ maxWidth: 700, margin: '0 auto', padding: 20 }}>
-        {/* Stats */}
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12, marginBottom: 16 }}>
-          {[
-            { label: 'Total', val: containers.length, icon: '📦' },
-            { label: 'Disponibles', val: available.length, icon: '✅' },
-            { label: 'En cours', val: inUse.length, icon: '🔄' },
-          ].map(({ label, val, icon }) => (
-            <div key={label} style={{ ...s.card, textAlign: 'center', marginBottom: 0 }}>
-              <div style={{ fontSize: 24 }}>{icon}</div>
-              <div style={{ fontSize: 28, fontWeight: 800, color: C.primary }}>{val}</div>
-              <div style={{ fontSize: 12, color: C.muted }}>{label}</div>
-            </div>
-          ))}
-        </div>
+        {/* Bouton Scanner principal */}
+          <button 
+            onClick={() => setShowScan(true)} 
+            style={{ 
+              ...s.btn('accent'), 
+              width: '100%', 
+              fontSize: 18, 
+              padding: '16px 20px', 
+              marginBottom: 20, 
+              borderRadius: 14,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: 10,
+              boxShadow: '0 4px 12px rgba(244,162,97,0.35)'
+            }}
+          >
+            Scanneur pour consigner/déconsigner 📲
+          </button>
+          {/* Stats */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12, marginBottom: 16 }}></div>
+                  
+                  {/* Stats */}
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12, marginBottom: 16 }}>
+                    {[
+                      { label: 'Total', val: containers.length, icon: '📦' },
+                      { label: 'Disponibles', val: available.length, icon: '✅' },
+                      { label: 'En cours', val: inUse.length, icon: '🔄' },
+                    ].map(({ label, val, icon }) => (
+                      <div key={label} style={{ ...s.card, textAlign: 'center', marginBottom: 0 }}>
+                        <div style={{ fontSize: 24 }}>{icon}</div>
+                        <div style={{ fontSize: 28, fontWeight: 800, color: C.primary }}>{val}</div>
+                        <div style={{ fontSize: 12, color: C.muted }}>{label}</div>
+                      </div>
+                    ))}
+                  </div>
 
         {/* Tabs */}
         <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>

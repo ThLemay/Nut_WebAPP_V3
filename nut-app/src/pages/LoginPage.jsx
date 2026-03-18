@@ -45,6 +45,9 @@ export default function LoginPage() {
   }
 
   const demoLogins = [
+    { label: '🐟 Marée Fraîche (Mareyeur)', email: 'maree@demo.com' },
+    { label: '🎣 Jean Le Marin (Pêcheur)', email: 'peche@demo.com' },
+    { label: '🏪 SuperFrais (GMS)', email: 'gms@demo.com' },
     { label: '🥗 EcoCantine (Entreprise)', email: 'eco@demo.com' },
     { label: '🥣 BioBowl (Entreprise)', email: 'bio@demo.com' },
     { label: '👤 Alice (Client)', email: 'alice@demo.com' },
@@ -61,8 +64,11 @@ export default function LoginPage() {
     }}>
       <div style={{ width: '100%', maxWidth: 420 }}>
         <div style={{ textAlign: 'center', marginBottom: 32 }}>
-          <div style={{ fontSize: 48 }}>🌰</div>
-          <h1 style={{ margin: '8px 0 4px', color: C.primary, fontSize: 32, fontWeight: 800 }}>NUT</h1>
+          <img 
+            src="/logo.png" 
+            alt="NUT Logo" 
+            style={{ height: 80, objectFit: 'contain', marginBottom: 8 }} 
+          />
           <p style={{ color: C.muted, margin: 0 }}>Système de consigne réutilisable</p>
         </div>
 

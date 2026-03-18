@@ -3,6 +3,7 @@ import { useAuth } from '../auth/AuthContext'
 import { containerRepo } from '../data/repos/containerRepo'
 import { transactionRepo } from '../data/repos/transactionRepo'
 import { supabase } from '../lib/supabase'
+import { QRCodeSVG } from 'qrcode.react'
 
 const C = {
   bg: '#f8faf7', card: '#ffffff', primary: '#2d6a4f', primaryLight: '#52b788',
@@ -97,7 +98,7 @@ export default function ClientDashboard() {
       {/* Header */}
       <header style={{ background: C.primary, padding: '16px 20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <span style={{ fontSize: 28 }}>🌰</span>
+          <img src="/logo-header.png" alt="NUT" style={{ height: 36, objectFit: 'contain' }} />
           <div>
             <div style={{ color: '#fff', fontWeight: 800, fontSize: 18 }}>NUT</div>
             <div style={{ color: '#a7f3d0', fontSize: 12 }}>Espace client</div>
@@ -187,16 +188,17 @@ export default function ClientDashboard() {
                 <p style={{ color: C.muted, fontSize: 14, margin: '0 0 20px' }}>
                   Présentez ce code à l'entreprise lors d'une consigne ou déconsigne.
                 </p>
-                <div style={{ background: '#f0fdf4', border: `2px dashed ${C.primaryLight}`, borderRadius: 16, padding: 24, maxWidth: 280, margin: '0 auto' }}>
-                  <div style={{ fontFamily: 'monospace', fontSize: 13, color: C.primary, wordBreak: 'break-all', fontWeight: 700 }}>
-                    {qrCode}
-                  </div>
+                <div style={{ background: '#fff', border: `2px solid ${C.border}`, borderRadius: 16, padding: 24, maxWidth: 280, margin: '0 auto', display: 'flex', justifyContent: 'center' }}>
+                  <QRCodeSVG 
+                    value={qrCode} 
+                    size={200}
+                    level="M"
+                    includeMargin={true}
+                  />
                 </div>
-                <p style={{ color: C.muted, fontSize: 12, marginTop: 16 }}>
-                  Ce code peut être scanné ou saisi manuellement.
-                </p>
               </div>
             )}
+            
           </>
         )}
       </div>
