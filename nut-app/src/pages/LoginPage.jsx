@@ -45,6 +45,9 @@ export default function LoginPage() {
   }
 
   const demoLogins = [
+    { label: '🐟 Marée Fraîche (Mareyeur)', email: 'maree@demo.com' },
+    { label: '🎣 Jean Le Marin (Pêcheur)', email: 'peche@demo.com' },
+    { label: '🏪 SuperFrais (GMS)', email: 'gms@demo.com' },
     { label: '🥗 EcoCantine (Entreprise)', email: 'eco@demo.com' },
     { label: '🥣 BioBowl (Entreprise)', email: 'bio@demo.com' },
     { label: '👤 Alice (Client)', email: 'alice@demo.com' },

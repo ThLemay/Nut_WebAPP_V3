@@ -2,9 +2,7 @@ import { AuthProvider, useAuth } from './auth/AuthContext'
 import LoginPage from './pages/LoginPage'
 import ClientDashboard from './pages/ClientDashboard'
 import EntrepriseDashboard from './pages/EntrepriseDashboard'
-import MareyeurDashboard from './pages/MareyeurDashboard'
-import PecheurDashboard from './pages/PecheurDashboard'
-import GMSDashboard from './pages/GMSDashboard'
+import CrateDashboard from './pages/CrateDashboard'
 
 function AppInner() {
   const { profile, loading } = useAuth()
@@ -21,10 +19,12 @@ function AppInner() {
 
   switch (profile.role) {
     case 'entreprise': return <EntrepriseDashboard />
-    case 'mareyeur':   return <MareyeurDashboard />
-    case 'pecheur':    return <PecheurDashboard />
-    case 'gms':        return <GMSDashboard />
-    default:           return <ClientDashboard />
+    case 'mareyeur':
+    case 'pecheur':
+    case 'gms':
+      return <CrateDashboard />
+    default:
+      return <ClientDashboard />
   }
 }
 

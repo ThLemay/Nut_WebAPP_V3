@@ -3,12 +3,11 @@ import { useAuth } from '../auth/AuthContext'
 import { crateRepo } from '../data/repos/crateRepo'
 import { crateMovementRepo } from '../data/repos/crateMovementRepo'
 import { supabase } from '../lib/supabase'
-import MareyeurScanPage from './MareyeurScanPage'
+import CrateScanPage from './CrateScanPage'
 
 const C = {
   bg: '#f0f7fa', card: '#ffffff', primary: '#0e7490', primaryLight: '#e0f2fe',
   accent: '#f59e0b', muted: '#6b7280', border: '#e5e7eb',
-  success: '#10b981', warning: '#f59e0b', danger: '#ef4444',
 }
 
 const s = {
@@ -29,30 +28,52 @@ const STATUS_LABELS = {
   perdu: { label: '❓ Perdue', color: '#6b7280', bg: '#f3f4f6' },
 }
 
-const MOVEMENT_ICONS = {
-  sortie: '📤', retour: '📥', transfert: '🔄', casse: '💔', perdu: '❓',
+const ROLE_CONFIG = {
+  mareyeur: { icon: '🐟', label: 'Mareyeur', gradient: 'linear-gradient(135deg, #0e7490, #155e75)', sub: '#a5f3fc' },
+  pecheur:  { icon: '🎣', label: 'Pêcheur',  gradient: 'linear-gradient(135deg, #0369a1, #075985)', sub: '#bae6fd' },
+  gms:      { icon: '🏪', label: 'GMS',       gradient: 'linear-gradient(135deg, #7c3aed, #5b21b6)', sub: '#ddd6fe' },
 }
 
-export default function MareyeurDashboard() {
+const MOVEMENT_ICONS = { sortie: '📤', retour: '📥', casse: '💔', perdu: '❓' }
+
+export default function CrateDashboard() {
   const { profile, logout } = useAuth()
   const [page, setPage] = useState('dashboard')
   const [summary, setSummary] = useState({ en_stock: 0, en_transit: 0, casse: 0, perdu: 0, total: 0 })
   const [crates, setCrates] = useState([])
+  const [holders, setHolders] = useState({}) // Map id → { name, role }
   const [movements, setMovements] = useState([])
   const [filter, setFilter] = useState('all')
   const [loading, setLoading] = useState(true)
+
+  const roleConf = ROLE_CONFIG[profile.role] || ROLE_CONFIG.mareyeur
 
   const loadData = async () => {
     setLoading(true)
     try {
       const [s, c, m] = await Promise.all([
         crateRepo.getStockSummary(profile.id),
-        crateRepo.getByOwner(profile.id),
+        crateRepo.getAllVisible(profile.id),
         crateMovementRepo.getByActor(profile.id, 20),
       ])
       setSummary(s)
       setCrates(c)
       setMovements(m)
+
+      // Charger les noms de tous les acteurs liés (holders + owners)
+      const relatedIds = [...new Set(
+        c.flatMap(cr => [cr.current_holder_id, cr.owner_id])
+          .filter(id => id && id !== profile.id)
+      )]
+      if (relatedIds.length > 0) {
+        const { data: profileData } = await supabase
+          .from('profiles')
+          .select('id, name, role')
+          .in('id', relatedIds)
+        const map = {}
+        profileData?.forEach(p => { map[p.id] = p })
+        setHolders(map)
+      }
     } catch (e) {
       console.error('Erreur chargement:', e)
     } finally {
@@ -63,9 +84,8 @@ export default function MareyeurDashboard() {
   useEffect(() => {
     loadData()
 
-    // Realtime sur crates
     const channel = supabase
-      .channel('mareyeur-crates')
+      .channel('crate-dashboard')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'crates' }, () => loadData())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'crate_movements' }, () => loadData())
       .subscribe()
@@ -75,7 +95,7 @@ export default function MareyeurDashboard() {
 
   if (page === 'scan') {
     return (
-      <MareyeurScanPage
+      <CrateScanPage
         profile={profile}
         onBack={() => setPage('dashboard')}
         onDone={() => { loadData(); setPage('dashboard') }}
@@ -85,13 +105,15 @@ export default function MareyeurDashboard() {
 
   const filteredCrates = filter === 'all' ? crates : crates.filter(c => c.status === filter)
 
+  const ROLE_ICONS = { mareyeur: '🐟', pecheur: '🎣', gms: '🏪' }
+
   return (
     <div style={{ minHeight: '100vh', background: C.bg, fontFamily: 'system-ui, sans-serif' }}>
       {/* Header */}
-      <header style={{ background: `linear-gradient(135deg, ${C.primary}, #155e75)`, padding: '16px 20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+      <header style={{ background: roleConf.gradient, padding: '16px 20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <div>
-          <div style={{ color: '#fff', fontWeight: 800, fontSize: 20 }}>🐟 {profile.name}</div>
-          <div style={{ color: '#a5f3fc', fontSize: 13 }}>Mareyeur · Gestion des caisses</div>
+          <div style={{ color: '#fff', fontWeight: 800, fontSize: 20 }}>{roleConf.icon} {profile.name}</div>
+          <div style={{ color: roleConf.sub, fontSize: 13 }}>{roleConf.label} · Gestion des caisses</div>
         </div>
         <button style={s.btn('ghost', true)} onClick={logout}>Déconnexion</button>
       </header>
@@ -144,18 +166,38 @@ export default function MareyeurDashboard() {
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
               {filteredCrates.map(c => {
                 const st = STATUS_LABELS[c.status]
+                // Pour les caisses en transit, afficher l'autre partie
+                let transitBadge = null
+                if (c.status === 'en_transit') {
+                  if (c.current_holder_id !== profile.id) {
+                    // J'ai envoyé cette caisse → montrer le destinataire
+                    const dest = holders[c.current_holder_id]
+                    if (dest) transitBadge = { arrow: '→', person: dest }
+                  } else if (c.owner_id && c.owner_id !== profile.id) {
+                    // J'ai reçu cette caisse → montrer l'expéditeur
+                    const sender = holders[c.owner_id]
+                    if (sender) transitBadge = { arrow: '←', person: sender }
+                  }
+                }
                 return (
-                  <div key={c.id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 12px', background: '#fafafa', borderRadius: 10 }}>
-                    <span style={{ background: st.bg, color: st.color, padding: '4px 10px', borderRadius: 8, fontSize: 12, fontWeight: 600 }}>
+                  <div key={c.id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 12px', background: transitBadge ? '#f0f4ff' : '#fafafa', borderRadius: 10 }}>
+                    <span style={{ background: st.bg, color: st.color, padding: '4px 10px', borderRadius: 8, fontSize: 12, fontWeight: 600, whiteSpace: 'nowrap' }}>
                       {st.label}
                     </span>
-                    <div style={{ flex: 1 }}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ fontWeight: 600, fontSize: 14 }}>{c.qr_code}</div>
                       <div style={{ fontSize: 12, color: C.muted }}>{c.crate_type}</div>
                     </div>
-                    {c.current_holder && c.current_holder.id !== profile.id && (
-                      <div style={{ fontSize: 12, color: C.muted }}>
-                        Chez {c.current_holder.name}
+                    {transitBadge ? (
+                      <div style={{
+                        fontSize: 12, color: '#3b82f6', fontWeight: 600,
+                        background: '#eff6ff', padding: '3px 8px', borderRadius: 6, whiteSpace: 'nowrap'
+                      }}>
+                        {transitBadge.arrow} {ROLE_ICONS[transitBadge.person.role] || '👤'} {transitBadge.person.name}
+                      </div>
+                    ) : c.updated_at && (
+                      <div style={{ fontSize: 11, color: C.muted, whiteSpace: 'nowrap' }}>
+                        {new Date(c.updated_at).toLocaleDateString('fr-FR', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}
                       </div>
                     )}
                   </div>
@@ -184,7 +226,7 @@ export default function MareyeurDashboard() {
                       {m.notes && ` · ${m.notes}`}
                     </div>
                   </div>
-                  <div style={{ color: C.muted, fontSize: 11 }}>
+                  <div style={{ color: C.muted, fontSize: 11, whiteSpace: 'nowrap' }}>
                     {new Date(m.created_at).toLocaleDateString('fr-FR', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}
                   </div>
                 </div>

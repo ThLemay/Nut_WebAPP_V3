@@ -1,24 +1,28 @@
 import { supabase } from '../../lib/supabase'
 
 export const crateRepo = {
-  /** Toutes les caisses appartenant à un mareyeur */
-  async getByOwner(ownerId) {
+  /** 
+   * Toutes les caisses visibles par un acteur :
+   * - celles qu'il détient physiquement (current_holder_id)
+   * - celles qu'il a envoyées et qui sont en transit ailleurs (owner_id)
+   */
+  async getAllVisible(profileId) {
     const { data, error } = await supabase
       .from('crates')
-      .select('*, current_holder:profiles!crates_current_holder_id_fkey(id, name, role)')
-      .eq('owner_id', ownerId)
-      .order('created_at', { ascending: false })
+      .select('*')
+      .or(`current_holder_id.eq.${profileId},owner_id.eq.${profileId}`)
+      .order('updated_at', { ascending: false })
     if (error) throw error
     return data
   },
 
-  /** Toutes les caisses actuellement détenues par un acteur */
+  /** Caisses détenues physiquement */
   async getByHolder(holderId) {
     const { data, error } = await supabase
       .from('crates')
-      .select('*, owner:profiles!crates_owner_id_fkey(id, name, role)')
+      .select('*')
       .eq('current_holder_id', holderId)
-      .order('created_at', { ascending: false })
+      .order('updated_at', { ascending: false })
     if (error) throw error
     return data
   },
@@ -27,19 +31,8 @@ export const crateRepo = {
   async getByQrCode(qrCode) {
     const { data, error } = await supabase
       .from('crates')
-      .select('*, current_holder:profiles!crates_current_holder_id_fkey(id, name, role), owner:profiles!crates_owner_id_fkey(id, name, role)')
-      .eq('qr_code', qrCode)
-      .single()
-    if (error) throw error
-    return data
-  },
-
-  /** Trouver une caisse par ID */
-  async getById(id) {
-    const { data, error } = await supabase
-      .from('crates')
       .select('*')
-      .eq('id', id)
+      .eq('qr_code', qrCode)
       .single()
     if (error) throw error
     return data
@@ -49,7 +42,7 @@ export const crateRepo = {
   async update(id, updates) {
     const { data, error } = await supabase
       .from('crates')
-      .update(updates)
+      .update({ ...updates, updated_at: new Date().toISOString() })
       .eq('id', id)
       .select()
       .single()
@@ -61,19 +54,19 @@ export const crateRepo = {
   async updateBatch(ids, updates) {
     const { data, error } = await supabase
       .from('crates')
-      .update(updates)
+      .update({ ...updates, updated_at: new Date().toISOString() })
       .in('id', ids)
       .select()
     if (error) throw error
     return data
   },
 
-  /** Compter les caisses par statut pour un propriétaire */
-  async getStockSummary(ownerId) {
+  /** Résumé du stock visible par un acteur */
+  async getStockSummary(profileId) {
     const { data, error } = await supabase
       .from('crates')
-      .select('status')
-      .eq('owner_id', ownerId)
+      .select('status, current_holder_id')
+      .or(`current_holder_id.eq.${profileId},owner_id.eq.${profileId}`)
     if (error) throw error
 
     const summary = { en_stock: 0, en_transit: 0, casse: 0, perdu: 0, total: 0 }

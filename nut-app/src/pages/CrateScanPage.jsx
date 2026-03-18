@@ -23,14 +23,31 @@ const s = {
 }
 
 const ACTIONS = [
-  { key: 'sortie', label: '📤 Sortie', desc: 'Envoyer à un pêcheur ou GMS', needsDest: true },
-  { key: 'retour', label: '📥 Retour', desc: 'Caisse revient en stock', needsDest: false },
-  { key: 'transfert', label: '🔄 Transfert', desc: 'Transférer à un mareyeur', needsDest: true },
+  { key: 'sortie', label: '📤 Sortie', desc: 'Envoyer à un acteur', needsDest: true },
+  { key: 'retour', label: '📥 Retour', desc: 'Remettre en stock', needsDest: false },
   { key: 'casse', label: '💔 Cassée', desc: 'Marquer comme cassée', needsDest: false },
   { key: 'perdu', label: '❓ Perdue', desc: 'Marquer comme perdue', needsDest: false },
 ]
 
-export default function MareyeurScanPage({ profile, onBack, onDone }) {
+/**
+ * Règles de sortie par rôle :
+ * - mareyeur → pecheur, gms, mareyeur (autre)
+ * - pecheur  → mareyeur seulement
+ * - gms      → mareyeur seulement
+ */
+function getAllowedDestRoles(senderRole) {
+  switch (senderRole) {
+    case 'mareyeur': return ['pecheur', 'gms', 'mareyeur']
+    case 'pecheur':  return ['mareyeur']
+    case 'gms':      return ['mareyeur']
+    default:         return []
+  }
+}
+
+const ROLE_ICONS = { mareyeur: '🐟', pecheur: '🎣', gms: '🏪' }
+const ROLE_LABELS = { mareyeur: 'Mareyeur', pecheur: 'Pêcheur', gms: 'GMS' }
+
+export default function CrateScanPage({ profile, onBack, onDone }) {
   // Scanner state
   const scannerRef = useRef(null)
   const processingRef = useRef(false)
@@ -45,30 +62,26 @@ export default function MareyeurScanPage({ profile, onBack, onDone }) {
   // UI state
   const [status, setStatus] = useState(null)
   const [loading, setLoading] = useState(false)
-  const [step, setStep] = useState('scan') // scan → action → validate
+  const [step, setStep] = useState('scan') // scan → action → validate → done
 
   // Charger les destinataires potentiels
   useEffect(() => {
     const loadDestinataires = async () => {
+      const allowedRoles = getAllowedDestRoles(profile.role)
+      if (allowedRoles.length === 0) return
+
       const { data } = await supabase
         .from('profiles')
         .select('id, name, role')
-        .in('role', ['pecheur', 'gms', 'mareyeur'])
+        .in('role', allowedRoles)
         .neq('id', profile.id)
         .order('name')
       setDestinataires(data || [])
     }
     loadDestinataires()
-  }, [profile.id])
+  }, [profile.id, profile.role])
 
-  // Filtrer les destinataires selon l'action
-  const filteredDestinataires = destinataires.filter(d => {
-    if (action === 'sortie') return d.role === 'pecheur' || d.role === 'gms'
-    if (action === 'transfert') return d.role === 'mareyeur'
-    return false
-  })
-
-  // ===== Scanner lifecycle (mêmes fixes que ScanPage) =====
+  // ===== Scanner lifecycle =====
   const stopScanner = useCallback(async () => {
     if (scannerRef.current) {
       try {
@@ -92,49 +105,38 @@ export default function MareyeurScanPage({ profile, onBack, onDone }) {
     try {
       const r = parseQR(decodedText)
 
-      // Accepter les QR de type caisse, ou tenter en brut
-      let qrCode = null
+      let qrCode
       if (r.type === 'caisse') {
         qrCode = r.id
-      } else if (r.type === 'unknown') {
-        // Tenter comme qr_code brut
-        qrCode = r.id
-      } else if (!r.error) {
-        // Tenter le texte brut du QR comme qr_code
-        qrCode = decodedText.trim()
       } else {
         qrCode = decodedText.trim()
       }
 
-      // Vérifier doublon dans le lot
+      // Vérifier doublon
       if (scannedCrates.some(c => c.qr_code === qrCode)) {
         setStatus({ type: 'error', msg: `⚠️ ${qrCode} déjà scanné` })
         return
       }
 
-      // Chercher la caisse en base
+      // Chercher en base
       const crate = await crateRepo.getByQrCode(qrCode)
-
       if (!crate) {
         setStatus({ type: 'error', msg: `Caisse ${qrCode} introuvable` })
         return
       }
 
-      // Ajouter au lot
       setScannedCrates(prev => [...prev, crate])
       setStatus({ type: 'success', msg: `✅ ${crate.qr_code} (${crate.crate_type}) ajoutée` })
 
-      // Feedback vibration
       if (navigator.vibrate) navigator.vibrate(100)
 
     } catch (e) {
-      setStatus({ type: 'error', msg: `Caisse introuvable` })
+      setStatus({ type: 'error', msg: 'Caisse introuvable' })
     } finally {
       setTimeout(() => { processingRef.current = false }, 1200)
     }
   }, [scannedCrates])
 
-  // Ref pour handleScan à jour dans le callback du scanner
   const handleScanRef = useRef(handleScan)
   useEffect(() => { handleScanRef.current = handleScan }, [handleScan])
 
@@ -142,11 +144,11 @@ export default function MareyeurScanPage({ profile, onBack, onDone }) {
     await stopScanner()
     await new Promise(r => setTimeout(r, 400))
 
-    const el = document.getElementById('qr-scanner-maree')
+    const el = document.getElementById('qr-scanner-crate')
     if (!el) return
 
     try {
-      const html5QrCode = new Html5Qrcode('qr-scanner-maree')
+      const html5QrCode = new Html5Qrcode('qr-scanner-crate')
       scannerRef.current = html5QrCode
 
       await html5QrCode.start(
@@ -172,7 +174,7 @@ export default function MareyeurScanPage({ profile, onBack, onDone }) {
     return () => { cancelled = true; stopScanner() }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ===== Supprimer une caisse du lot =====
+  // ===== Supprimer du lot =====
   const removeCrate = (qrCode) => {
     setScannedCrates(prev => prev.filter(c => c.qr_code !== qrCode))
   }
@@ -193,9 +195,7 @@ export default function MareyeurScanPage({ profile, onBack, onDone }) {
 
     try {
       const crateIds = scannedCrates.map(c => c.id)
-      const movements = []
 
-      // Déterminer le nouveau statut et détenteur
       let newStatus, newHolderId
       switch (action) {
         case 'sortie':
@@ -205,10 +205,6 @@ export default function MareyeurScanPage({ profile, onBack, onDone }) {
         case 'retour':
           newStatus = 'en_stock'
           newHolderId = profile.id
-          break
-        case 'transfert':
-          newStatus = 'en_transit'
-          newHolderId = destinataire
           break
         case 'casse':
           newStatus = 'casse'
@@ -220,25 +216,23 @@ export default function MareyeurScanPage({ profile, onBack, onDone }) {
           break
       }
 
-      // Mettre à jour les caisses en lot
-      await crateRepo.updateBatch(crateIds, {
-        status: newStatus,
-        current_holder_id: newHolderId,
-      })
+      // Mettre à jour les caisses
+      // Sur sortie, owner_id = expéditeur pour qu'il voie ses caisses en transit
+      const updates = { status: newStatus, current_holder_id: newHolderId }
+      if (action === 'sortie') updates.owner_id = profile.id
+      await crateRepo.updateBatch(crateIds, updates)
 
       // Créer les mouvements
-      for (const crate of scannedCrates) {
-        movements.push({
-          crate_id: crate.id,
-          type: action,
-          from_id: action === 'retour' ? crate.current_holder_id : profile.id,
-          to_id: act.needsDest ? destinataire : (action === 'retour' ? profile.id : null),
-        })
-      }
+      const movements = scannedCrates.map(crate => ({
+        crate_id: crate.id,
+        type: action,
+        from_id: profile.id,
+        to_id: act.needsDest ? destinataire : null,
+      }))
 
       await crateMovementRepo.createBatch(movements)
 
-      const destName = filteredDestinataires.find(d => d.id === destinataire)?.name
+      const destName = destinataires.find(d => d.id === destinataire)?.name
       const msg = act.needsDest
         ? `✅ ${scannedCrates.length} caisse(s) · ${act.label} → ${destName}`
         : `✅ ${scannedCrates.length} caisse(s) · ${act.label}`
@@ -247,9 +241,7 @@ export default function MareyeurScanPage({ profile, onBack, onDone }) {
       setStep('done')
       stopScanner()
 
-      setTimeout(() => {
-        onDone()
-      }, 2000)
+      setTimeout(() => { onDone() }, 2000)
 
     } catch (e) {
       console.error('Erreur validation:', e)
@@ -285,7 +277,7 @@ export default function MareyeurScanPage({ profile, onBack, onDone }) {
 
       <div style={{ maxWidth: 500, margin: '0 auto', padding: 20 }}>
 
-        {/* Étape 1 : Scanner */}
+        {/* Scanner */}
         {step !== 'done' && (
           <div style={s.card}>
             <div style={{ marginBottom: 12, textAlign: 'center' }}>
@@ -296,7 +288,7 @@ export default function MareyeurScanPage({ profile, onBack, onDone }) {
                 Scannez une ou plusieurs caisses d'affilée
               </div>
             </div>
-            <div id="qr-scanner-maree" style={{ width: '100%', minHeight: 280 }}></div>
+            <div id="qr-scanner-crate" style={{ width: '100%', minHeight: 280 }}></div>
             {!scannerReady && (
               <div style={{ textAlign: 'center', padding: 16, color: C.muted, fontSize: 14 }}>
                 ⏳ Démarrage de la caméra...
@@ -305,7 +297,7 @@ export default function MareyeurScanPage({ profile, onBack, onDone }) {
           </div>
         )}
 
-        {/* Liste des caisses scannées */}
+        {/* Lot scanné */}
         <div style={s.card}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
             <h3 style={{ margin: 0, fontSize: 15, fontWeight: 700 }}>
@@ -341,7 +333,7 @@ export default function MareyeurScanPage({ profile, onBack, onDone }) {
           )}
         </div>
 
-        {/* Étape 2 : Action */}
+        {/* Action */}
         {scannedCrates.length > 0 && step !== 'done' && (
           <div style={s.card}>
             <h3 style={{ margin: '0 0 12px', fontSize: 15, fontWeight: 700 }}>🎯 Choisir l'action</h3>
@@ -368,25 +360,31 @@ export default function MareyeurScanPage({ profile, onBack, onDone }) {
           </div>
         )}
 
-        {/* Étape 2b : Destinataire */}
-        {action && ACTIONS.find(a => a.key === action)?.needsDest && step !== 'done' && (
+        {/* Destinataire (seulement pour sortie) */}
+        {action === 'sortie' && step !== 'done' && (
           <div style={s.card}>
             <h3 style={{ margin: '0 0 12px', fontSize: 15, fontWeight: 700 }}>👤 Destinataire</h3>
-            <select
-              value={destinataire}
-              onChange={e => setDestinataire(e.target.value)}
-              style={{
-                width: '100%', padding: '12px 14px', borderRadius: 10,
-                border: `1px solid ${C.border}`, fontSize: 15, background: '#fff',
-              }}
-            >
-              <option value="">— Choisir un destinataire —</option>
-              {filteredDestinataires.map(d => (
-                <option key={d.id} value={d.id}>
-                  {d.role === 'pecheur' ? '🎣' : d.role === 'gms' ? '🏪' : '🐟'} {d.name} ({d.role})
-                </option>
-              ))}
-            </select>
+            {destinataires.length === 0 ? (
+              <div style={{ color: C.muted, fontSize: 14, textAlign: 'center', padding: 12 }}>
+                Aucun destinataire disponible pour votre rôle
+              </div>
+            ) : (
+              <select
+                value={destinataire}
+                onChange={e => setDestinataire(e.target.value)}
+                style={{
+                  width: '100%', padding: '12px 14px', borderRadius: 10,
+                  border: `1px solid ${C.border}`, fontSize: 15, background: '#fff',
+                }}
+              >
+                <option value="">— Choisir un destinataire —</option>
+                {destinataires.map(d => (
+                  <option key={d.id} value={d.id}>
+                    {ROLE_ICONS[d.role] || '👤'} {d.name} ({ROLE_LABELS[d.role] || d.role})
+                  </option>
+                ))}
+              </select>
+            )}
           </div>
         )}
 
@@ -395,7 +393,7 @@ export default function MareyeurScanPage({ profile, onBack, onDone }) {
           <button
             style={{ ...s.btn('accent'), width: '100%', fontSize: 17, padding: '14px 20px', marginBottom: 12 }}
             onClick={handleValidate}
-            disabled={loading || (ACTIONS.find(a => a.key === action)?.needsDest && !destinataire)}
+            disabled={loading || (action === 'sortie' && !destinataire)}
           >
             {loading ? '⏳ Validation...' : `✅ Valider ${scannedCrates.length} caisse(s)`}
           </button>
